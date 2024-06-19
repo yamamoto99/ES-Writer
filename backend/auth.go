@@ -38,6 +38,11 @@ var CheckEmail struct {
 	VerificationCode string `json:"verificationCode"`
 }
 
+type SentenceUpdateInput struct {
+	UserID   string `json:"userid"`
+	Sentence string `json:"sentence"`
+}
+
 func createCognitoClient(ctx context.Context) (*cognitoidentityprovider.Client, error) {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(cognitoRegion))
 	if err != nil {
@@ -304,3 +309,42 @@ func signin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, "User signed in successfully")
 }
+
+func updateSentence(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var input SentenceUpdateInput
+	err := json.NewDecoder(r.Body).Decode(&input)
+	if err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	if SentenceUpdateInput.UserID == "" || SentenceUpdateInput.Sentence == "" {
+		http.Error(w, "Missing user_id or sentence", http.StatusBadRequest)
+		return
+	}
+
+	stmt, err := db.Prepare("UPDATE users SET sentence = $1 WHERE id = $2")
+	if err != nil {
+		log.Println("Database prepare statement error:", err)
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(input.Sentence, input.UserID)
+	if err != nil {
+		http.Error(w, "Database update failed", http.StatusInternalServerError)
+		log.Println("Database update error:", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Sentence updated successfully"))
+}
+
+

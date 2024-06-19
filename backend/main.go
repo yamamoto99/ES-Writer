@@ -18,6 +18,7 @@ type User struct {
 	CreatedAt string
 }
 
+
 var db *sql.DB
 
 var cognitoRegion string
@@ -70,6 +71,7 @@ func main() {
 	http.HandleFunc("/checkEmail", checkEmail)
 	http.HandleFunc("/resentEmail", resentEmail)
 	http.HandleFunc("/welcome", welcome)
+	http.HandleFunc("/updatesentence", updateSentence)
 	http.HandleFunc("/getAnswers", processQuestionsWithAI)
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
