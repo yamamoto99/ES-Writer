@@ -323,10 +323,10 @@ func updateSentence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if SentenceUpdateInput.UserID == "" || SentenceUpdateInput.Sentence == "" {
-		http.Error(w, "Missing user_id or sentence", http.StatusBadRequest)
-		return
-	}
+	// if SentenceUpdateInput.UserID == "" || SentenceUpdateInput.Sentence == "" {
+	// 	http.Error(w, "Missing user_id or sentence", http.StatusBadRequest)
+	// 	return
+	// }
 
 	stmt, err := db.Prepare("UPDATE users SET sentence = $1 WHERE id = $2")
 	if err != nil {
