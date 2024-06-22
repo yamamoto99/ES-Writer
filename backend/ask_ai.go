@@ -1,108 +1,117 @@
 package main
 
 import (
-	"bytes"
+	// "bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	// "io"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	// "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	// "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 )
 
-// AIに送信するリクエストの構造体
-type AiRequest struct {
-	Contents []Content `json:"contents"`
-}
+// // リクエスト内のコンテンツ部分
+// type Content struct {
+// 	Parts []Part `json:"parts"`
+// }
 
-// リクエスト内のコンテンツ部分
-type Content struct {
-	Parts []Part `json:"parts"`
-}
+// // コンテンツ部分の中身の文章
+// type Part struct {
+// 	Text string `json:"text"`
+// }
 
-// コンテンツ部分の中身の文章
-type Part struct {
-	Text string `json:"text"`
-}
-
-// HTMLリクエスト
-type HtmlRequest struct {
-	Html string `json:"html"`
-}
+// // HTMLリクエスト
+// type HtmlRequest struct {
+// 	Html string `json:"html"`
+// }
 
 // AIからのレスポンスを受け取る
-type AiResponse struct {
-	Candidates []struct {
-		Content struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
-		} `json:"content"`
-	} `json:"candidates"`
+
+// AIからのレスポンスを受け取る構造体
+
+type ClaudeRequest struct {
+	Prompt            string   `json:"prompt"`
+	MaxTokensToSample int      `json:"max_tokens_to_sample"`
+	Temperature       float64  `json:"temperature,omitempty"`
+	StopSequences     []string `json:"stop_sequences,omitempty"`
+}
+
+type ClaudeResponse struct {
+	Completion string `json:"completion"`
 }
 
 func sendToAi(ctx context.Context, question string) (string, error) {
-	// エンドポイントURLを設定
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=%s", apiKey)
-	// 質問を含むリクエストボディをJSON形式に変換
-	reqBody, err := json.Marshal(AiRequest{
-		Contents: []Content{
-			{
-				Parts: []Part{
-					{Text: question},
-				},
-			},
-		},
+	// AWSの設定
+	region := "us-west-2"
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion(region),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(
+				os.Getenv("AWS_ACCESS_KEY_ID"),
+				os.Getenv("AWS_SECRET_ACCESS_KEY"),
+				os.Getenv("AWS_SESSION_TOKEN"),
+			),
+		),
+	)
+	fmt.Println(os.Getenv("AWS_ACCESS_KEY_ID"))
+	
+	if err != nil {
+		return "", fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	// bedrockにリクエストを送るためのクライアント作成
+	client := bedrockruntime.NewFromConfig(cfg)
+
+	modelId := "anthropic.claude-v2"
+	enclosedPrompt := "Human: " + question + "\n\nAssistant:"
+
+	reqBody, err := json.Marshal(ClaudeRequest{
+		Prompt:            enclosedPrompt,
+		MaxTokensToSample: 1000,
+		Temperature:       0.2,
+		StopSequences:     []string{"以上です。"},
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	// url先に質問(reqBody)を送るオブジェクト作成 ctx=リクエストのサイクルを制御する、タイムアウトやキャンセルなど
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqBody))
+	//　質問を投げかける
+	output, err := client.InvokeModel(context.TODO(), &bedrockruntime.InvokeModelInput{
+		ModelId:     &modelId,
+		ContentType: aws.String("application/json"),
+		Body:        reqBody,
+	})
 	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	// httpクライアントの初期化
-	client := &http.Client{}
-	// httpリクエスト(req)を送信
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	// レスポンスの中身の読み取り
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to invoke model: %w", err)
 	}
 
-	// 確認用
-	// fmt.Printf("HTTP Status: %d\n", resp.StatusCode)
-	// fmt.Printf("Response Body: %s\n", string(body))
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("error: request %d: %s", resp.StatusCode, body)
+	// レスポンスを構造体に変換
+	var response ClaudeResponse
+	if err := json.Unmarshal(output.Body, &response); err != nil {
+		return "", fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	// レスポンスをjson形式からAiREsponseの構造体の型に直す
-	var geminiResp AiResponse
-	if err := json.Unmarshal(body, &geminiResp); err != nil {
-		return "", err
+	// 中身がからの場合
+	if response.Completion == "" {
+		return "", fmt.Errorf("no answer found")
 	}
+	
+	//確認用(時間かかる)
+	fmt.Println(response.Completion)
 
-	// 中身がある(正しく返却された)時
-	if len(geminiResp.Candidates) > 0 && len(geminiResp.Candidates[0].Content.Parts) > 0 {
-		return geminiResp.Candidates[0].Content.Parts[0].Text, nil
-	}
-
-	return "", fmt.Errorf("no answer found")
+	return response.Completion, nil
 }
+
 
 func generatePromptWithBio(bio, question string) string {
 	return fmt.Sprintf("あなたの経歴は%sです。以下の質問に答えてください。簡潔かつ具体的に記述し、#や*,-などは使用せずに平文で解答部分のみを出力してください。\n%s", bio, question)
@@ -120,8 +129,11 @@ func processQuestionsWithAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// HTMLの読み込み
-	var req HtmlRequest
+	//HTMLの読み込み
+	var req struct {
+		Html string `json:"html"`
+	}
+
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		log.Printf("Error decoding request body: %v", err)
@@ -129,16 +141,20 @@ func processQuestionsWithAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 不要な部分を取り除く
+	//不要な部分を取り除く
 	cleanHtml := cleanHTMLContent(req.Html)
 	log.Printf("Cleaned HTML: %s", cleanHtml)
 
 	// 質問の抽出
-	questions := extractQuestions(cleanHtml)
+	questions := extractQuestions(string(cleanHtml))
 	if len(questions) == 0 {
 		log.Printf("No questions found in the HTML content")
 		http.Error(w, "No questions found", http.StatusBadRequest)
 		return
+	}
+	//TOOD htmlを投げて質問に答えさせる
+	for i:=0; i < len(questions); i++{
+		fmt.Println(questions[i])
 	}
 
 	// 経歴情報を定義

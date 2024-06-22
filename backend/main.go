@@ -23,7 +23,7 @@ var db *sql.DB
 var cognitoRegion string
 var clientId string
 var jwksURL string
-var apiKey string
+// var apiKey string //gemini じゃないからいらない
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("handler called...")
@@ -65,8 +65,7 @@ func main() {
 	cognitoRegion = os.Getenv("COGNITO_REGION")
 	clientId = os.Getenv("COGNITO_CLIENT_ID")
 	jwksURL = os.Getenv("TOKEN_KEY_URL")
-	apiKey = os.Getenv("GOOGLE_API_KEY")
-	if cognitoRegion == "" || clientId == "" || jwksURL == "" || apiKey == "" {
+	if cognitoRegion == "" || clientId == "" || jwksURL == "" {
 		log.Fatalf("Required environment variables are not set")
 	}
 
