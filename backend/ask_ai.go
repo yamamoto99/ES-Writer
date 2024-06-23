@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	_ "github.com/lib/pq"
 )
 
 // AIに送信するリクエストの構造体
@@ -41,6 +43,23 @@ type AiResponse struct {
 			} `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
+}
+
+// ユーザープロフィールの構造体
+type UserProfile struct {
+	Bio        string
+	Experience string
+	Projects   string
+}
+
+// プロフィールを取得する関数
+func getUserProfile(userID string) (UserProfile, error) {
+	var profile UserProfile
+	err := db.QueryRow("SELECT bio, experience, projects FROM users WHERE id=$1", userID).Scan(&profile.Bio, &profile.Experience, &profile.Projects)
+	if err != nil {
+		return profile, fmt.Errorf("プロフィールの取得に失敗しました: %v", err)
+	}
+	return profile, nil
 }
 
 func sendToAi(ctx context.Context, question string) (string, error) {
@@ -104,8 +123,9 @@ func sendToAi(ctx context.Context, question string) (string, error) {
 	return "", fmt.Errorf("no answer found")
 }
 
-func generatePromptWithBio(bio, question string) string {
-	return fmt.Sprintf("あなたの経歴は%sです。以下の質問に答えてください。簡潔かつ具体的に記述し、#や*,-などは使用せずに平文で解答部分のみを出力してください。\n%s", bio, question)
+func generatePromptWithBio(profile UserProfile, question string) string {
+	combinedBio := fmt.Sprintf("%sです。今までの経験は%sです。これまでに作ってきた作品は%s", profile.Bio, profile.Experience, profile.Projects)
+	return fmt.Sprintf("あなたの経歴は%sです。以下の質問に答えてください。簡潔かつ具体的に記述し、#や*,-などは使用せずに平文で解答部分のみを出力してください。\n%s", combinedBio, question)
 }
 
 func processQuestionsWithAI(w http.ResponseWriter, r *http.Request) {
@@ -120,9 +140,23 @@ func processQuestionsWithAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// トークンからユーザーIDを取得
+	userID, err := getValueFromToken(r, "sub")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("トークンからユーザーIDの取得に失敗しました: %v", err), http.StatusUnauthorized)
+		return
+	}
+
+	// ユーザープロフィールを取得
+	profile, err := getUserProfile(userID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("ユーザープロフィールの取得に失敗しました: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	// HTMLの読み込み
 	var req HtmlRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
+	err = json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		log.Printf("Error decoding request body: %v", err)
 		http.Error(w, "Bad request", http.StatusBadRequest)
@@ -140,9 +174,6 @@ func processQuestionsWithAI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No questions found", http.StatusBadRequest)
 		return
 	}
-
-	// 経歴情報を定義
-	bio := "大学一年生の頃に海外で英語を一年学び、その後、大学でプログラミングの勉強をし、今は個人開発などをしている。webアプリケーションも作成した。(https://github.com/yamamoto99/es-writer)将来的にはエンジニアとしてさまざまな開発に携わりたい。普段は42Tokyoに通っており、CやGoを学んでいる。"
 
 	// 並列処理のためのWaitGroupを作成
 	var wg sync.WaitGroup
@@ -166,7 +197,7 @@ func processQuestionsWithAI(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(i int, q string) {
 			defer wg.Done()
-			prompt := generatePromptWithBio(bio, q)
+			prompt := generatePromptWithBio(profile, q)
 			answer, err := sendToAi(ctx, prompt)
 			if err != nil {
 				log.Printf("Error sending to AI: %v", err)
@@ -188,6 +219,6 @@ func processQuestionsWithAI(w http.ResponseWriter, r *http.Request) {
 }
 
 // func main() {
-// 	http.HandleFunc("/getAnswers", processQuestionsWithAI)
-// 	log.Fatal(http.ListenAndServe(":8080", nil))
+//  http.HandleFunc("/getAnswers", processQuestionsWithAI)
+//  log.Fatal(http.ListenAndServe(":8080", nil))
 // }
